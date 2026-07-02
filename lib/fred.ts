@@ -52,10 +52,17 @@ function parseObservationValue(raw: string): number | null {
   return raw === "." ? null : Number(raw);
 }
 
+// FRED's `units` transform computes these server-side instead of the app
+// doing it manually: "pc1" = percent change from a year ago (YoY), "pch" =
+// percent change from the previous period (MoM for monthly series). Verified
+// against the live API for CPIAUCSL/PAYEMS before use.
+export type FredUnits = "lin" | "pc1" | "pch";
+
 export interface GetSeriesObservationsParams {
   seriesId: string;
   start?: string; // YYYY-MM-DD
   end?: string; // YYYY-MM-DD
+  units?: FredUnits; // default "lin" (raw level)
   revalidate?: number; // seconds, default 600 (10 min) per spec section 9
 }
 
@@ -63,9 +70,10 @@ export async function getSeriesObservations({
   seriesId,
   start,
   end,
+  units = "lin",
   revalidate = 600,
 }: GetSeriesObservationsParams): Promise<FredObservation[]> {
-  const params: Record<string, string> = { series_id: seriesId };
+  const params: Record<string, string> = { series_id: seriesId, units };
   if (start) params.observation_start = start;
   if (end) params.observation_end = end;
 
@@ -81,7 +89,7 @@ export async function getSeriesObservations({
 
 export async function getMultipleSeriesObservations(
   seriesIds: string[],
-  range: { start?: string; end?: string; revalidate?: number }
+  range: { start?: string; end?: string; units?: FredUnits; revalidate?: number }
 ): Promise<Record<string, FredObservation[]>> {
   const entries = await Promise.all(
     seriesIds.map(async (seriesId) => {
@@ -142,30 +150,39 @@ export const TENOR_TO_FRED_SERIES: Record<string, string> = {
   "30-Year": "DGS30",
 };
 
+// "level": raw series value, shown with the indicator's natural decimals.
+// "yoy_mom": fetched twice (units=pc1 and units=pch) and shown as two
+// columns - Year-on-Year % and Month-to-Month %, 2 decimals, no % sign.
+// "pch": fetched once with units=pch - a single "change" percentage column,
+// 2 decimals, no % sign (used for NFP: "change in NFP").
+export type IndicatorDisplayMode = "level" | "yoy_mom" | "pch";
+
 export interface MacroIndicator {
   id: string;
   label: string;
   seriesId: string;
   releaseId: number;
   frequency: "Monthly" | "Quarterly";
+  displayMode: IndicatorDisplayMode;
+  decimals: number;
 }
 
 // releaseId is shared where FRED bundles indicators into the same release
 // (e.g. CPI & Core CPI are published together) - verified against
 // /fred/series/release for each series.
 export const MACRO_INDICATORS: MacroIndicator[] = [
-  { id: "cpi", label: "CPI (headline inflation)", seriesId: "CPIAUCSL", releaseId: 10, frequency: "Monthly" },
-  { id: "core_cpi", label: "Core CPI (ex food & energy)", seriesId: "CPILFESL", releaseId: 10, frequency: "Monthly" },
-  { id: "pce", label: "PCE Price Index", seriesId: "PCEPI", releaseId: 54, frequency: "Monthly" },
-  { id: "core_pce", label: "Core PCE", seriesId: "PCEPILFE", releaseId: 54, frequency: "Monthly" },
-  { id: "fed_funds", label: "Fed Funds Rate (effective)", seriesId: "FEDFUNDS", releaseId: 18, frequency: "Monthly" },
-  { id: "nfp", label: "Nonfarm Payrolls (NFP)", seriesId: "PAYEMS", releaseId: 50, frequency: "Monthly" },
-  { id: "unemployment", label: "Unemployment Rate", seriesId: "UNRATE", releaseId: 50, frequency: "Monthly" },
-  { id: "gdp", label: "Real GDP", seriesId: "GDPC1", releaseId: 53, frequency: "Quarterly" },
+  { id: "cpi", label: "CPI (headline inflation)", seriesId: "CPIAUCSL", releaseId: 10, frequency: "Monthly", displayMode: "yoy_mom", decimals: 2 },
+  { id: "core_cpi", label: "Core CPI (ex food & energy)", seriesId: "CPILFESL", releaseId: 10, frequency: "Monthly", displayMode: "yoy_mom", decimals: 2 },
+  { id: "pce", label: "PCE Price Index", seriesId: "PCEPI", releaseId: 54, frequency: "Monthly", displayMode: "yoy_mom", decimals: 2 },
+  { id: "core_pce", label: "Core PCE", seriesId: "PCEPILFE", releaseId: 54, frequency: "Monthly", displayMode: "yoy_mom", decimals: 2 },
+  { id: "fed_funds", label: "Fed Funds Rate (effective)", seriesId: "FEDFUNDS", releaseId: 18, frequency: "Monthly", displayMode: "level", decimals: 2 },
+  { id: "nfp", label: "Change in NFP", seriesId: "PAYEMS", releaseId: 50, frequency: "Monthly", displayMode: "pch", decimals: 2 },
+  { id: "unemployment", label: "Unemployment Rate", seriesId: "UNRATE", releaseId: 50, frequency: "Monthly", displayMode: "level", decimals: 1 },
+  { id: "gdp", label: "Real GDP (8 kuartal terakhir)", seriesId: "GDPC1", releaseId: 53, frequency: "Quarterly", displayMode: "level", decimals: 1 },
   // ISM Manufacturing PMI (NAPM/NAPMPI) was pulled from FRED over licensing -
   // verified missing on the live API - falls back to Industrial Production.
-  { id: "ism_pmi", label: "ISM Manufacturing PMI (proxy: Industrial Production)", seriesId: "INDPRO", releaseId: 13, frequency: "Monthly" },
-  { id: "retail_sales", label: "Retail Sales", seriesId: "RSAFS", releaseId: 9, frequency: "Monthly" },
+  { id: "ism_pmi", label: "ISM Manufacturing PMI (proxy: Industrial Production)", seriesId: "INDPRO", releaseId: 13, frequency: "Monthly", displayMode: "level", decimals: 2 },
+  { id: "retail_sales", label: "Retail Sales", seriesId: "RSAFS", releaseId: 9, frequency: "Monthly", displayMode: "level", decimals: 1 },
 ];
 
 // FRED's "FOMC Press Release" release (id 101) fires daily alongside the

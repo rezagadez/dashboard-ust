@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Legend,
   Line,
@@ -102,6 +104,36 @@ export default function YieldChart({ start, end, defaultTenor }: YieldChartProps
     );
   }
 
+  // Spread only makes sense for exactly 2 tenors - order them short/long by
+  // their position in TENOR_OPTIONS (already sorted shortest to longest).
+  const spreadInfo = useMemo(() => {
+    if (selected.length !== 2) return null;
+    const [a, b] = selected;
+    const indexA = TENOR_OPTIONS.findIndex((o) => o.series === a);
+    const indexB = TENOR_OPTIONS.findIndex((o) => o.series === b);
+    const shortSeries = indexA <= indexB ? a : b;
+    const longSeries = indexA <= indexB ? b : a;
+    return {
+      shortSeries,
+      longSeries,
+      shortLabel: TENOR_OPTIONS.find((o) => o.series === shortSeries)?.label ?? shortSeries,
+      longLabel: TENOR_OPTIONS.find((o) => o.series === longSeries)?.label ?? longSeries,
+    };
+  }, [selected]);
+
+  const spreadData = useMemo(() => {
+    if (!spreadInfo) return [];
+    return chartData.map((point) => {
+      const shortVal = point[spreadInfo.shortSeries];
+      const longVal = point[spreadInfo.longSeries];
+      const spread =
+        typeof shortVal === "number" && typeof longVal === "number"
+          ? Math.round((longVal - shortVal) * 100 * 100) / 100
+          : null;
+      return { date: point.date, spread };
+    });
+  }, [spreadInfo, chartData]);
+
   return (
     <section className="space-y-3">
       <h2 className="text-lg font-semibold text-slate-900">
@@ -153,6 +185,33 @@ export default function YieldChart({ start, end, defaultTenor }: YieldChartProps
               ))}
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {spreadInfo && spreadData.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-slate-600">
+            Spread {spreadInfo.longLabel} &minus; {spreadInfo.shortLabel} (bps)
+          </p>
+          <div className="h-48 w-full rounded-lg border border-slate-200 p-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={spreadData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={30} />
+                <YAxis tick={{ fontSize: 11 }} width={40} domain={["auto", "auto"]} />
+                <Tooltip />
+                <Area
+                  type="monotone"
+                  dataKey="spread"
+                  name="Spread (bps)"
+                  stroke="#7c3aed"
+                  fill="#7c3aed"
+                  fillOpacity={0.2}
+                  connectNulls
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
     </section>
